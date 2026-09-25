@@ -8,8 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const projectRoot = resolve(import.meta.dirname, "..");
-const tsxBin = resolve(projectRoot, "node_modules/.bin/tsx");
-const entry = resolve(projectRoot, "src/index.ts");
+const entry = resolve(projectRoot, "dist/index.js");
 const fixture = pathToFileURL(resolve(projectRoot, "fixtures/form.html")).href;
 
 function textOf(result: unknown): string {
@@ -21,8 +20,8 @@ function textOf(result: unknown): string {
 }
 
 const transport = new StdioClientTransport({
-  command: tsxBin,
-  args: ["watch", entry],
+  command: process.execPath,
+  args: [entry],
   stderr: "pipe",
 });
 transport.stderr?.on("data", () => {});
