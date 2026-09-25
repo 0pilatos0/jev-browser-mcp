@@ -304,7 +304,16 @@ export async function takeSnapshot(
         return record;
       });
 
-      const rawText = (document.body?.innerText ?? "")
+      const textRoots = ["#mw-content-text", "article", "main", "[role=main]"];
+      let textRoot: HTMLElement | null = document.body;
+      for (const rootSelector of textRoots) {
+        const candidate = document.querySelector(rootSelector) as HTMLElement | null;
+        if (candidate && (candidate.innerText ?? "").trim().length > 200) {
+          textRoot = candidate;
+          break;
+        }
+      }
+      const rawText = (textRoot?.innerText ?? document.body?.innerText ?? "")
         .split("\n")
         .map((line) => line.replace(/\s+/g, " ").trim())
         .filter(Boolean)

@@ -125,7 +125,7 @@ src/decide.ts     Jev questions (fan-out) and answer parsing
 src/actions.ts    validated execution: click / type / select / scroll / back / wait
 src/loop.ts       one-step and full-run loops, stop gates, typed hand-backs
 src/server.ts     MCP tool registration
-scripts/          smoke, snapshot inspector, e2e
+scripts/          smoke, snapshot inspector, e2e, run (ad-hoc), challenges (headed suite)
 ```
 
 MIT. The loop design borrows from `browser-use/jev-ultrafast` and `jkudish/jev-browser` (both MIT).
