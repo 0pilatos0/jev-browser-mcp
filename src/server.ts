@@ -5,7 +5,7 @@ import * as actions from "./actions.js";
 import { BrowserSession } from "./browser.js";
 import { envFlag } from "./env.js";
 import { runGoal, stepOnce } from "./loop.js";
-import { takeSnapshot, ensurePageHelpers } from "./snapshot.js";
+import { takeSnapshot, ensurePageHelpers, findElements } from "./snapshot.js";
 import { USD_PER_INPUT_TOKEN, type PageElement, type Snapshot } from "./types.js";
 
 const session = new BrowserSession(envFlag("JEV_BROWSER_HEADED"));
@@ -112,7 +112,7 @@ export function registerTools(server: McpServer): void {
         "Read the current page deterministically (no model call, no cost): URL, title, visible text, and numbered interactive elements (refs e1, e2, ...). Use this when you want to decide and act yourself via browser_click / browser_type / browser_select. Offscreen elements are marked.",
       inputSchema: {
         max_chars: z.number().int().min(200).max(20000).optional().describe("Cap on visible text (default 6000)."),
-        max_elements: z.number().int().min(0).max(200).optional().describe("Cap on elements (default 200)."),
+        max_elements: z.number().int().min(0).max(250).optional().describe("Cap on elements (default 250)."),
       },
     },
     async ({ max_chars, max_elements }) => {
@@ -120,7 +120,7 @@ export function registerTools(server: McpServer): void {
         const page = await session.getPage();
         const snapshot = await takeSnapshot(page, {
           maxText: max_chars ?? 6000,
-          maxElements: max_elements ?? 200,
+          maxElements: max_elements ?? 250,
           canGoBack: session.canGoBack,
         });
         return ok(observeView(snapshot));
@@ -302,6 +302,33 @@ export function registerTools(server: McpServer): void {
         session.noteNavigation();
         const snapshot = await currentSnapshot(1200);
         return ok({ ...result, page: pageSummary(snapshot) });
+      } catch (error) {
+        return fail(message(error));
+      }
+    },
+  );
+
+  server.registerTool(
+    "browser_find",
+    {
+      title: "Find elements by name",
+      description:
+        "Find interactive elements anywhere on the page by case-insensitive name match, even outside the snapshot window on very large pages. Deterministic: no model call, no cost. Returns refs usable with browser_click / browser_type. Use this for targeted hops on dense pages (e.g. find the link named \"Philips\").",
+      inputSchema: {
+        query: z.string().describe("Text to match against element names/labels, e.g. \"Philips\"."),
+        max_results: z.number().int().min(1).max(50).optional().describe("Default 10."),
+      },
+    },
+    async ({ query, max_results }) => {
+      try {
+        const page = await session.getPage();
+        const matches = await findElements(page, query, { maxResults: max_results ?? 10 });
+        return ok({
+          query,
+          match_count: matches.length,
+          matches,
+          ...(matches.length === 0 ? { note: "No visible element matched; try a shorter query." } : {}),
+        });
       } catch (error) {
         return fail(message(error));
       }

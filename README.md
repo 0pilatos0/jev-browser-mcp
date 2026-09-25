@@ -41,6 +41,7 @@ page ──► snapshot (one atomic DOM read, no model)
 | `browser_type` | no | Type into a field by ref (optional Enter). |
 | `browser_select` | no | Choose a dropdown option by ref. |
 | `browser_press` | no | Press a key (Enter, Escape, Tab, PageDown, ...). |
+| `browser_find` | no | Find elements by name anywhere on the page (even outside the snapshot window); returns refs. |
 | `browser_extract` | no | Return text / links / HTML, optionally scoped by CSS selector. |
 | `browser_close` | no | Close the browser. |
 
@@ -113,7 +114,7 @@ Jev 1.13 bills **$42 per billion input tokens** ($0.042 / Mtok); output tokens a
 
 - Single shared page per MCP session, launched headless by default (`JEV_BROWSER_HEADED=1` or `browser_open {headed:true}` to watch).
 - No iframes, shadow DOM, canvas, uploads, or file inputs yet.
-- Up to 200 elements per snapshot (Jev `Choice` supports 255 options); dense pages are truncated viewport-first.
+- Up to 250 elements per snapshot (Jev `Choice` supports 255 options); dense pages are truncated viewport-and-content-first.
 - A `DONE` verdict is not independent proof of success — verify with `browser_extract` when it matters.
 - Page text and element labels are sent to the TypeSafe API on every Jev call. Do not use `browser_act` / `browser_run` on pages whose content must not leave your machine.
 

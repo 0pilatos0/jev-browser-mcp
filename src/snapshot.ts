@@ -45,6 +45,8 @@ interface Candidate {
   disabled: boolean;
   inViewport: boolean;
   submitOnType: boolean;
+  href: string;
+  inRoot: boolean;
   top: number;
   left: number;
 }
@@ -62,6 +64,105 @@ export async function ensurePageHelpers(page: Page): Promise<void> {
 }
 
 /**
+ * Deterministic name search across the whole page, independent of the snapshot
+ * window. Match elements get fresh refs usable with browser_click / browser_type.
+ */
+export async function findElements(
+  page: Page,
+  query: string,
+  options: { maxResults?: number } = {},
+): Promise<PageElement[]> {
+  const maxResults = Math.min(Math.max(options.maxResults ?? 10, 1), 50);
+  await ensurePageHelpers(page);
+  return page.evaluate(
+    ({ query, maxResults, selector }) => {
+      for (const el of Array.from(document.querySelectorAll("[data-jev-ref]"))) {
+        el.removeAttribute("data-jev-ref");
+      }
+      const needle = query.toLowerCase();
+      const collapse = (input: string | null | undefined, cap = 110): string =>
+        (input ?? "").replace(/\s+/g, " ").trim().slice(0, cap);
+      const isVisible = (el: Element): boolean => {
+        if ((el as HTMLElement).hidden) return false;
+        const style = getComputedStyle(el);
+        if (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          style.visibility === "collapse"
+        ) {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        return rect.width >= 2 && rect.height >= 2;
+      };
+      const labelFor = (el: Element): string => {
+        const he = el as HTMLElement;
+        const aria = he.getAttribute("aria-label");
+        if (aria) return collapse(aria);
+        const text = he.innerText || he.textContent || "";
+        if (text.trim()) return collapse(text, 100);
+        const placeholder = he.getAttribute("placeholder");
+        if (placeholder) return collapse(placeholder);
+        const value = (he as HTMLInputElement).value;
+        if (value) return collapse(String(value), 60);
+        return "";
+      };
+
+      const inViewport = (el: Element): boolean => {
+        const rect = el.getBoundingClientRect();
+        return (
+          rect.bottom > 0 &&
+          rect.top < window.innerHeight &&
+          rect.right > 0 &&
+          rect.left < window.innerWidth
+        );
+      };
+
+      const results: PageElement[] = [];
+      for (const el of Array.from(document.querySelectorAll(selector))) {
+        if (results.length >= maxResults) break;
+        const tag = el.tagName.toLowerCase();
+        const type = ((el as HTMLInputElement).type || "").toLowerCase();
+        if (tag === "input" && (type === "password" || type === "hidden")) continue;
+        if (!isVisible(el)) continue;
+        const name = labelFor(el);
+        if (!name || !name.toLowerCase().includes(needle)) continue;
+
+        let kind: "click" | "type" | "select" = "click";
+        let role = (el.getAttribute("role") || "").toLowerCase() || (tag === "a" ? "link" : "button");
+        if (tag === "select") {
+          kind = "select";
+          role = "combobox";
+        } else if (
+          tag === "textarea" ||
+          (tag === "input" && !["submit", "button", "reset", "checkbox", "radio"].includes(type))
+        ) {
+          kind = "type";
+          role = role || "textbox";
+        }
+
+        const ref = `f${results.length + 1}`;
+        el.setAttribute("data-jev-ref", ref);
+        const record: PageElement = {
+          ref,
+          kind,
+          role,
+          name,
+          inViewport: inViewport(el),
+        };
+        const value = tag === "select"
+          ? collapse((el as HTMLSelectElement).selectedOptions[0]?.text ?? "", 60)
+          : collapse((el as HTMLInputElement).value ?? "", 60);
+        if (value) record.value = value;
+        results.push(record);
+      }
+      return results;
+    },
+    { query, maxResults, selector: SELECTOR },
+  );
+}
+
+/**
  * Reads the page atomically: indexed interactive elements (refs e1..eN), visible text,
  * and basic bot-check detection. No model call, no screenshots.
  */
@@ -70,7 +171,7 @@ export async function takeSnapshot(
   options: SnapshotOptions = {},
 ): Promise<Snapshot> {
   const maxText = options.maxText ?? 6000;
-  const maxElements = options.maxElements ?? 200;
+  const maxElements = options.maxElements ?? 250;
 
   await ensurePageHelpers(page);
 
@@ -243,6 +344,33 @@ export async function takeSnapshot(
       const isAriaHidden = (el: Element): boolean =>
         !!el.closest('[aria-hidden="true"]');
 
+      const contentRoots = ["#mw-content-text", "article", "main", "[role=main]"];
+      let contentRoot: HTMLElement | null = null;
+      for (const rootSelector of contentRoots) {
+        const candidate = document.querySelector(rootSelector) as HTMLElement | null;
+        if (candidate && (candidate.innerText ?? "").trim().length > 200) {
+          contentRoot = candidate;
+          break;
+        }
+      }
+
+      const NOISE_SELECTOR = [
+        ".reflist",
+        ".references",
+        ".navbox",
+        ".navbox-styles",
+        ".catlinks",
+        ".mw-editsection",
+        ".vector-toc",
+        ".mw-portlet",
+        ".vector-menu",
+        ".mw-footer",
+        ".printfooter",
+        ".sistersitebox",
+        ".interlanguage-link",
+        "footer",
+      ].join(",");
+
       let hiddenPasswordFields = 0;
       const candidates: Candidate[] = [];
       let total = 0;
@@ -250,6 +378,7 @@ export async function takeSnapshot(
       if (maxElements > 0) {
         for (const el of Array.from(document.querySelectorAll(selector))) {
           if (isAriaHidden(el) || isNested(el) || !isVisible(el)) continue;
+          if (el.closest(NOISE_SELECTOR)) continue;
           const classified = kindFor(el);
           if (classified.kind === "password") {
             hiddenPasswordFields += 1;
@@ -273,19 +402,45 @@ export async function takeSnapshot(
               el.getAttribute("aria-disabled") === "true",
             inViewport: inViewport(el),
             submitOnType,
+            href: el instanceof HTMLAnchorElement ? el.href : "",
+            inRoot: !!contentRoot && contentRoot.contains(el),
             top: rect.top,
             left: rect.left,
           });
         }
 
+        // Article content outranks browser chrome: in-content and in-viewport first,
+        // then content (document order), then remaining visible chrome.
+        const priority = (candidate: Candidate): number =>
+          candidate.inRoot && candidate.inViewport
+            ? 0
+            : candidate.inRoot
+              ? 1
+              : candidate.inViewport
+                ? 2
+                : 3;
         candidates.sort((a, b) => {
-          if (a.inViewport !== b.inViewport) return a.inViewport ? -1 : 1;
+          const priorityA = priority(a);
+          const priorityB = priority(b);
+          if (priorityA !== priorityB) return priorityA - priorityB;
           if (a.top !== b.top) return a.top - b.top;
           return a.left - b.left;
         });
 
-        total = candidates.length;
-        candidates.splice(maxElements);
+        // Collapse repeated destinations: big articles link the same href many times.
+        const seenHrefs = new Set<string>();
+        const deduped: Candidate[] = [];
+        for (const candidate of candidates) {
+          if (candidate.kind === "click" && candidate.href) {
+            if (seenHrefs.has(candidate.href)) continue;
+            seenHrefs.add(candidate.href);
+          }
+          deduped.push(candidate);
+        }
+        total = deduped.length;
+        deduped.splice(maxElements);
+        candidates.length = 0;
+        candidates.push(...deduped);
       }
 
       const elements: PageElement[] = candidates.map((c, index) => {
@@ -304,16 +459,7 @@ export async function takeSnapshot(
         return record;
       });
 
-      const textRoots = ["#mw-content-text", "article", "main", "[role=main]"];
-      let textRoot: HTMLElement | null = document.body;
-      for (const rootSelector of textRoots) {
-        const candidate = document.querySelector(rootSelector) as HTMLElement | null;
-        if (candidate && (candidate.innerText ?? "").trim().length > 200) {
-          textRoot = candidate;
-          break;
-        }
-      }
-      const rawText = (textRoot?.innerText ?? document.body?.innerText ?? "")
+      const rawText = (contentRoot?.innerText ?? document.body?.innerText ?? "")
         .split("\n")
         .map((line) => line.replace(/\s+/g, " ").trim())
         .filter(Boolean)

@@ -24,6 +24,7 @@
     "run": "tsx scripts/run.ts",
     "challenges": "tsx scripts/challenges.ts",
     "mcp-challenges": "tsx scripts/mcp-challenges.ts",
+    "wikirace": "tsx scripts/wikirace-guided.ts",
     "mcp-check": "tsx scripts/mcp-check.ts"
   },
   "dependencies": {

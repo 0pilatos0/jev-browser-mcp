@@ -130,7 +130,7 @@ export async function decide(args: DecideArgs): Promise<Decision> {
 
   if (clickables.length > 0) {
     questions.click_target = choice(
-      "IF the chosen operation is CLICK, which element should be clicked? If CLICK was not chosen, pick any element.",
+      "IF the chosen operation is CLICK, which element should be clicked? Elements marked 'offscreen' are still clickable; the browser scrolls them into view automatically. If CLICK was not chosen, pick any element.",
       criteriaFor(clickables),
     );
   }
