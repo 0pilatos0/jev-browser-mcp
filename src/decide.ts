@@ -16,6 +16,10 @@ import {
 
 let client: TypeSafeClient | null = null;
 
+/** Above this many clickable links, choose in two stages: segment picks -> final pick. */
+const TWO_STAGE_THRESHOLD = 240;
+const SEGMENT_SIZE = 200;
+
 function getClient(): TypeSafeClient {
   if (!client) {
     if (!process.env.TYPESAFE_API_KEY) {
@@ -128,12 +132,26 @@ export async function decide(args: DecideArgs): Promise<Decision> {
     ),
   };
 
-  if (clickables.length > 0) {
+  const useSegmentedLinks = clickables.length > TWO_STAGE_THRESHOLD;
+  const segments: PageElement[][] = [];
+  if (useSegmentedLinks) {
+    for (let index = 0; index < clickables.length; index += SEGMENT_SIZE) {
+      segments.push(clickables.slice(index, index + SEGMENT_SIZE));
+    }
+  }
+
+  if (clickables.length > 0 && !useSegmentedLinks) {
     questions.click_target = choice(
       "IF the chosen operation is CLICK, which element should be clicked? Elements marked 'offscreen' are still clickable; the browser scrolls them into view automatically. If CLICK was not chosen, pick any element.",
       criteriaFor(clickables),
     );
   }
+  segments.forEach((segment, index) => {
+    questions[`click_segment_${index + 1}`] = choice(
+      `Segment ${index + 1} of ${segments.length} of the page's links. Which link in this segment is most likely to move toward the goal? Use world knowledge, not screen position. Choose __none__ if nothing in this segment is relevant.`,
+      { ...criteriaFor(segment), __none__: "No link in this segment is relevant." },
+    );
+  });
   if (typeables.length > 0) {
     const labelHint =
       args.valueKeys && args.valueKeys.length > 0
@@ -182,19 +200,62 @@ export async function decide(args: DecideArgs): Promise<Decision> {
     );
   }
 
-  const targetHead = `${operation.toLowerCase()}_target`;
-  const target = answers[targetHead];
+  let targetRef: string | undefined;
+  let targetConfidence: number | undefined;
+  let inputTokens = response.usage.input_tokens;
+  let outputTokens = response.usage.output_tokens;
+  let model = response.model;
+
+  if (useSegmentedLinks && operation === "CLICK") {
+    const winners: PageElement[] = [];
+    for (let index = 1; index <= segments.length; index += 1) {
+      const picked = answers[`click_segment_${index}`]?.choice;
+      if (picked && picked !== "__none__") {
+        const element = clickables.find((candidate) => candidate.ref === picked);
+        if (element) winners.push(element);
+      }
+    }
+    if (winners.length === 1) {
+      targetRef = winners[0]!.ref;
+    } else if (winners.length > 1) {
+      const stageTwo = await getClient().systemOne({
+        state,
+        questions: {
+          click_target: choice(
+            "These are the strongest link candidates from each segment of the page. Which single link should be clicked to pursue the goal? Choose __none__ only if none of them can help.",
+            { ...criteriaFor(winners), __none__: "None of these links." },
+          ),
+        },
+        ...modelOption(),
+      });
+      inputTokens += stageTwo.usage.input_tokens;
+      outputTokens += stageTwo.usage.output_tokens;
+      model = stageTwo.model;
+      const stageTwoAnswers = stageTwo.answers as unknown as Record<string, AnyAnswer>;
+      const picked = stageTwoAnswers.click_target;
+      if (picked?.choice && picked.choice !== "__none__") {
+        targetRef = picked.choice;
+        targetConfidence = picked.confidence;
+      } else {
+        targetRef = winners[0]!.ref;
+      }
+    }
+  } else {
+    const targetHead = `${operation.toLowerCase()}_target`;
+    targetRef = answers[targetHead]?.choice;
+    targetConfidence = answers[targetHead]?.confidence;
+  }
 
   return {
     operation,
     operationConfidence: answers.operation?.confidence,
-    targetRef: target?.choice,
-    targetConfidence: target?.confidence,
+    targetRef,
+    targetConfidence,
     goalMet: answers.goal_met?.noul,
     stuck: answers.stuck?.noul,
-    inputTokens: response.usage.input_tokens,
-    outputTokens: response.usage.output_tokens,
-    model: response.model,
+    inputTokens,
+    outputTokens,
+    model,
   };
 }
 

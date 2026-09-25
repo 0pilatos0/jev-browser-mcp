@@ -96,7 +96,7 @@ export function registerTools(server: McpServer): void {
       try {
         if (headed !== undefined) session.setHeaded(headed);
         const page = await session.open(url);
-        const snapshot = await takeSnapshot(page, { maxText: 1500, canGoBack: session.canGoBack });
+        const snapshot = await takeSnapshot(page, { maxText: 1500, poolLimit: 250, canGoBack: session.canGoBack });
         return ok(pageSummary(snapshot));
       } catch (error) {
         return fail(message(error));
@@ -120,10 +120,9 @@ export function registerTools(server: McpServer): void {
         const page = await session.getPage();
         const snapshot = await takeSnapshot(page, {
           maxText: max_chars ?? 6000,
-          maxElements: max_elements ?? 250,
           canGoBack: session.canGoBack,
         });
-        return ok(observeView(snapshot));
+        return ok(observeView(snapshot, max_elements ?? 250));
       } catch (error) {
         return fail(message(error));
       }

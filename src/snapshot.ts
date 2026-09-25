@@ -3,7 +3,12 @@ import type { ChallengeInfo, ElementKind, PageElement, Snapshot } from "./types.
 
 export interface SnapshotOptions {
   maxText?: number;
-  /** Set to 0 to skip element extraction entirely. */
+  /**
+   * Number of interactive elements to collect and tag with refs (default 1200).
+   * Callers slice for display/prompting; the pool keeps deep content reachable.
+   */
+  poolLimit?: number;
+  /** @deprecated Use poolLimit. 0 disables element collection. */
   maxElements?: number;
   canGoBack?: boolean;
 }
@@ -171,12 +176,12 @@ export async function takeSnapshot(
   options: SnapshotOptions = {},
 ): Promise<Snapshot> {
   const maxText = options.maxText ?? 6000;
-  const maxElements = options.maxElements ?? 250;
+  const poolLimit = options.poolLimit ?? (options.maxElements === 0 ? 0 : 1200);
 
   await ensurePageHelpers(page);
 
   const data = await page.evaluate(
-    ({ maxText, maxElements, selector }) => {
+    ({ maxText, poolLimit, selector }) => {
       for (const el of Array.from(document.querySelectorAll("[data-jev-ref]"))) {
         el.removeAttribute("data-jev-ref");
       }
@@ -375,7 +380,7 @@ export async function takeSnapshot(
       const candidates: Candidate[] = [];
       let total = 0;
 
-      if (maxElements > 0) {
+      if (poolLimit > 0) {
         for (const el of Array.from(document.querySelectorAll(selector))) {
           if (isAriaHidden(el) || isNested(el) || !isVisible(el)) continue;
           if (el.closest(NOISE_SELECTOR)) continue;
@@ -438,7 +443,7 @@ export async function takeSnapshot(
           deduped.push(candidate);
         }
         total = deduped.length;
-        deduped.splice(maxElements);
+        deduped.splice(poolLimit);
         candidates.length = 0;
         candidates.push(...deduped);
       }
@@ -496,7 +501,7 @@ export async function takeSnapshot(
         challenge,
       };
     },
-    { maxText, maxElements, selector: SELECTOR },
+    { maxText, poolLimit, selector: SELECTOR },
   );
 
   return {

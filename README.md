@@ -114,7 +114,7 @@ Jev 1.13 bills **$42 per billion input tokens** ($0.042 / Mtok); output tokens a
 
 - Single shared page per MCP session, launched headless by default (`JEV_BROWSER_HEADED=1` or `browser_open {headed:true}` to watch).
 - No iframes, shadow DOM, canvas, uploads, or file inputs yet.
-- Up to 250 elements per snapshot (Jev `Choice` supports 255 options); dense pages are truncated viewport-and-content-first.
+- Dense pages: the action pool keeps up to 1,200 refs (deduped, article-first, noise-filtered). When more than 240 links are clickable, Jev chooses in two stages (per-segment picks in one parallel request, then a final pick). Displayed snapshots cap at 250.
 - A `DONE` verdict is not independent proof of success — verify with `browser_extract` when it matters.
 - Page text and element labels are sent to the TypeSafe API on every Jev call. Do not use `browser_act` / `browser_run` on pages whose content must not leave your machine.
 
