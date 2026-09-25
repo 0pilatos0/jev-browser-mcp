@@ -393,6 +393,11 @@ export async function startServer(): Promise<void> {
   registerTools(server);
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  try {
+    server.sendToolListChanged();
+  } catch {
+    // Optional notification; some transports do not support it.
+  }
   console.error("[jev-browser-mcp] ready (stdio)");
 
   const shutdown = async () => {

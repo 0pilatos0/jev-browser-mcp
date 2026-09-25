@@ -52,6 +52,8 @@ export interface DecideArgs {
   valueKeys?: string[];
   /** Element refs to omit from the action space (e.g. fields that already rejected a value). */
   excludeRefs?: string[];
+  /** Operations to omit for this decision (e.g. scrolling after too many scrolls). */
+  excludeOps?: string[];
 }
 
 /** One Jev request decides the next operation *and* the target element. */
@@ -91,6 +93,9 @@ export async function decide(args: DecideArgs): Promise<Decision> {
   if (snapshot.challenge) {
     operationCriteria.BLOCKED =
       "The page is a bot check or hard block; stop and report it instead of guessing.";
+  }
+  for (const excludedOperation of args.excludeOps ?? []) {
+    delete operationCriteria[excludedOperation];
   }
 
   const criteriaFor = (elements: PageElement[]): Record<string, string> =>

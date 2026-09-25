@@ -15,7 +15,9 @@ function shorten(error: unknown): string {
   return message.split("\n")[0]?.slice(0, 200) ?? "unknown error";
 }
 
-async function occlusion(locator: Locator): Promise<{ visible: boolean; covered: boolean }> {
+async function occlusion(
+  locator: Locator,
+): Promise<{ visible: boolean; covered: boolean; occluder?: string }> {
   return locator
     .evaluate((el) => {
       const rect = el.getBoundingClientRect();
@@ -23,8 +25,18 @@ async function occlusion(locator: Locator): Promise<{ visible: boolean; covered:
       const cx = Math.min(Math.max(rect.left + rect.width / 2, 1), window.innerWidth - 1);
       const cy = Math.min(Math.max(rect.top + rect.height / 2, 1), window.innerHeight - 1);
       const top = document.elementFromPoint(cx, cy);
-      const covered = !!top && top !== el && !el.contains(top) && !top.contains(el);
-      return { visible: true, covered };
+      if (top && top !== el && !el.contains(top) && !top.contains(el)) {
+        const label = (top.getAttribute("aria-label") || top.textContent || "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 60);
+        return {
+          visible: true,
+          covered: true,
+          occluder: `${top.tagName.toLowerCase()}${label ? ` "${label}"` : ""}`,
+        };
+      }
+      return { visible: true, covered: false };
     })
     .catch(() => ({ visible: false, covered: false }));
 }
@@ -47,7 +59,12 @@ async function verifyTarget(page: Page, ref: string): Promise<TargetCheck> {
       await page.waitForTimeout(120);
       recheck = await occlusion(locator);
       if (!recheck.visible) return { ok: false, reason: "element is not visible" };
-      if (recheck.covered) return { ok: false, reason: "element is covered by another element" };
+      if (recheck.covered) {
+        return {
+          ok: false,
+          reason: `element is covered by ${recheck.occluder ?? "another element"}`,
+        };
+      }
     }
   }
   return { ok: true };

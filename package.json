@@ -23,6 +23,7 @@
     "e2e": "tsx scripts/e2e.ts",
     "run": "tsx scripts/run.ts",
     "challenges": "tsx scripts/challenges.ts",
+    "mcp-challenges": "tsx scripts/mcp-challenges.ts",
     "mcp-check": "tsx scripts/mcp-check.ts"
   },
   "dependencies": {

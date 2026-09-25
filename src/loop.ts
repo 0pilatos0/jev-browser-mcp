@@ -55,6 +55,8 @@ export interface StepOptions {
   onMissingValue?: "needs_text" | "reject";
   /** Refs to hide from the action space for this decision. */
   excludeRefs?: string[];
+  /** Operations to hide for this decision (e.g. scrolling after too many scrolls). */
+  excludeOps?: string[];
 }
 
 function normalize(input: string): string {
@@ -152,6 +154,7 @@ export async function stepOnce(
       })),
       valueKeys: options.values ? Object.keys(options.values) : undefined,
       excludeRefs: options.excludeRefs,
+      excludeOps: options.excludeOps,
     });
   } catch (error) {
     return errorOutcome(stepNumber, snapshot, "decision failed", error);
@@ -258,6 +261,14 @@ export async function stepOnce(
             },
           };
         }
+        const currentValue = (field!.value ?? "").trim();
+        if (
+          currentValue &&
+          (currentValue === text.trim() || text.trim().startsWith(currentValue))
+        ) {
+          result = { ok: true, detail: `${field!.ref} already contains the intended text` };
+          break;
+        }
         result = await actions.typeRef(
           page,
           field!.ref,
@@ -267,8 +278,7 @@ export async function stepOnce(
         );
         if (result.ok && resolved.via) result.detail += ` (via ${resolved.via})`;
         break;
-      }
-      case "SELECT": {
+      }      case "SELECT": {
         const labels = await actions.readOptionLabels(page, field!.ref);
         let choice: string | undefined;
         if (options.values) {
@@ -410,6 +420,7 @@ export async function runGoal(
   let needs: NeedsInfo | undefined;
   let snapshot: Snapshot | undefined;
   let consecutiveStale = 0;
+  let consecutiveScrolls = 0;
   const rejectedRefs = new Set<string>();
 
   for (let stepNumber = 1; stepNumber <= options.maxSteps; stepNumber += 1) {
@@ -426,9 +437,15 @@ export async function runGoal(
       snapshot,
       onMissingValue: "reject",
       excludeRefs: [...rejectedRefs],
+      excludeOps: consecutiveScrolls >= 4 ? ["SCROLL_UP", "SCROLL_DOWN"] : [],
     });
 
     steps.push(outcome.step);
+    if (outcome.step.operation === "SCROLL_UP" || outcome.step.operation === "SCROLL_DOWN") {
+      consecutiveScrolls += 1;
+    } else {
+      consecutiveScrolls = 0;
+    }
     const consequential = new Set([
       "CLICK",
       "TYPE",
