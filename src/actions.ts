@@ -38,8 +38,17 @@ async function verifyTarget(page: Page, ref: string): Promise<TargetCheck> {
   if (!state.visible) return { ok: false, reason: "element is not visible" };
   if (state.covered) {
     await locator.scrollIntoViewIfNeeded().catch(() => {});
-    const recheck = await occlusion(locator);
-    if (recheck.covered) return { ok: false, reason: "element is covered by another element" };
+    let recheck = await occlusion(locator);
+    if (!recheck.visible) return { ok: false, reason: "element is not visible" };
+    if (recheck.covered) {
+      // Autocomplete lists, menus, and popups overlay the target. Dismiss them
+      // with Escape and re-check before giving up.
+      await page.keyboard.press("Escape").catch(() => {});
+      await page.waitForTimeout(120);
+      recheck = await occlusion(locator);
+      if (!recheck.visible) return { ok: false, reason: "element is not visible" };
+      if (recheck.covered) return { ok: false, reason: "element is covered by another element" };
+    }
   }
   return { ok: true };
 }

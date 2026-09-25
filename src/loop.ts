@@ -1,4 +1,4 @@
-import { chooseSelectOption, decide } from "./decide.js";
+import { chooseSelectOption, chooseValueKey, decide } from "./decide.js";
 import * as actions from "./actions.js";
 import type { BrowserSession } from "./browser.js";
 import { takeSnapshot } from "./snapshot.js";
@@ -30,6 +30,7 @@ export type StepStatus =
   | "blocked"
   | "needs_text"
   | "needs_value"
+  | "rejected"
   | "stale"
   | "error";
 
@@ -50,6 +51,10 @@ export interface StepOptions {
   maxText?: number;
   /** Reuse the latest observation to avoid a second DOM read per step. */
   snapshot?: Snapshot;
+  /** "reject" lets an autonomous run retry a different action instead of stopping. */
+  onMissingValue?: "needs_text" | "reject";
+  /** Refs to hide from the action space for this decision. */
+  excludeRefs?: string[];
 }
 
 function normalize(input: string): string {
@@ -77,9 +82,6 @@ export function resolveText(
     if (candidate && target && (target.includes(candidate) || candidate.includes(target))) {
       return { text: value, via: `"${key}"` };
     }
-  }
-  if (entries.length === 1) {
-    return { text: entries[0]![1], via: "single supplied value" };
   }
   return {};
 }
@@ -148,6 +150,8 @@ export async function stepOnce(
         operation: record.operation,
         detail: record.detail,
       })),
+      valueKeys: options.values ? Object.keys(options.values) : undefined,
+      excludeRefs: options.excludeRefs,
     });
   } catch (error) {
     return errorOutcome(stepNumber, snapshot, "decision failed", error);
@@ -201,8 +205,16 @@ export async function stepOnce(
     return { status: "stale", step, usage, snapshot };
   }
 
+  const beforeUrl = page.url();
   let result: actions.ActionResult;
 
+  if (decision.operation === "BACK" && (decision.operationConfidence ?? 1) < 0.5) {
+    // Going back destroys progress; never do it on a guess.
+    step.operation = "WAIT";
+    step.detail = `low-confidence BACK (${decision.operationConfidence ?? "?"}) replaced with a wait`;
+    step.error = undefined;
+    result = await actions.waitBriefly(page, 700);
+  } else
   try {
     switch (decision.operation) {
       case "CLICK": {
@@ -211,10 +223,25 @@ export async function stepOnce(
       }
       case "TYPE": {
         const resolved = resolveText(field!, options.values);
-        if (!resolved.text) {
-          step.detail = `needs text for ${field!.ref} "${field!.name}"`;
+        let text = resolved.text;
+        if (!text && options.values) {
+          const keys = Object.keys(options.values);
+          if (keys.length > 0) {
+            const chosen = await chooseValueKey({
+              goal: options.goal,
+              instruction: options.instruction,
+              field: field!,
+              keys,
+            });
+            usage.input_tokens += chosen.inputTokens;
+            usage.output_tokens += chosen.outputTokens;
+            if (chosen.key) text = options.values[chosen.key];
+          }
+        }
+        if (!text) {
+          step.detail = `skipped ${field!.ref} "${field!.name}": no supplied value belongs there`;
           return {
-            status: "needs_text",
+            status: options.onMissingValue === "reject" ? "rejected" : "needs_text",
             step,
             usage,
             snapshot,
@@ -234,7 +261,7 @@ export async function stepOnce(
         result = await actions.typeRef(
           page,
           field!.ref,
-          resolved.text,
+          text,
           field!.submitOnType === true,
           field,
         );
@@ -282,6 +309,10 @@ export async function stepOnce(
         result = await actions.scroll(page, decision.operation);
         break;
       }
+      case "PRESS_ENTER": {
+        result = await actions.pressKey(page, "Enter");
+        break;
+      }
       case "BACK": {
         result = await actions.goBack(page);
         break;
@@ -310,6 +341,10 @@ export async function stepOnce(
 
   const settled = await session.settle();
   session.noteNavigation();
+  if (settled.url() !== beforeUrl) {
+    // A navigation happened: give client-rendered pages a moment to paint.
+    await settled.waitForTimeout(500).catch(() => {});
+  }
   const after = await takeSnapshot(settled, { maxText, canGoBack: session.canGoBack });
 
   return {
@@ -338,6 +373,25 @@ export interface RunOutcome {
   needs?: NeedsInfo;
 }
 
+/** True when the tail of the step sequence repeats a cycle of period 1-3 three times. */
+function detectLoop(signatures: string[]): boolean {
+  const count = signatures.length;
+  for (const period of [1, 2, 3] as const) {
+    const need = period * 3;
+    if (count < need) continue;
+    const tail = signatures.slice(count - need);
+    let repeats = true;
+    for (let index = period; index < need; index += 1) {
+      if (tail[index] !== tail[index % period]) {
+        repeats = false;
+        break;
+      }
+    }
+    if (repeats) return true;
+  }
+  return false;
+}
+
 /** Drives the shared page toward a goal, one Jev decision per step. */
 export async function runGoal(
   session: BrowserSession,
@@ -345,6 +399,7 @@ export async function runGoal(
 ): Promise<RunOutcome> {
   const startedAt = Date.now();
   const steps: StepRecord[] = [];
+  const signatures: string[] = [];
   const usage: UsageTotals = {
     jev_calls: 0,
     input_tokens: 0,
@@ -355,6 +410,7 @@ export async function runGoal(
   let needs: NeedsInfo | undefined;
   let snapshot: Snapshot | undefined;
   let consecutiveStale = 0;
+  const rejectedRefs = new Set<string>();
 
   for (let stepNumber = 1; stepNumber <= options.maxSteps; stepNumber += 1) {
     if (Date.now() - startedAt > options.maxSeconds * 1000) {
@@ -368,23 +424,50 @@ export async function runGoal(
       history: steps,
       stepNumber,
       snapshot,
+      onMissingValue: "reject",
+      excludeRefs: [...rejectedRefs],
     });
 
     steps.push(outcome.step);
+    const consequential = new Set([
+      "CLICK",
+      "TYPE",
+      "SELECT",
+      "PRESS_ENTER",
+      "BACK",
+    ]);
+    if (consequential.has(outcome.step.operation)) {
+      signatures.push(`${outcome.step.operation}:${outcome.step.targetRef ?? "-"}`);
+    }
     usage.jev_calls += 1;
     usage.input_tokens += outcome.usage.input_tokens;
     usage.output_tokens += outcome.usage.output_tokens;
     usage.est_cost_usd = usage.input_tokens * USD_PER_INPUT_TOKEN;
     snapshot = outcome.snapshot;
 
+    if (consequential.has(outcome.step.operation) && detectLoop(signatures)) {
+      steps.push({
+        step: stepNumber + 1,
+        operation: "ERROR",
+        detail: `loop detected (${signatures.slice(-6).join(" ")}); stopping`,
+        error: "loop",
+      });
+      status = "stuck";
+      break;
+    }
+
     if (outcome.status === "executed") {
       consecutiveStale = 0;
       continue;
     }
-    if (outcome.status === "stale") {
+    if (outcome.status === "stale" || outcome.status === "rejected") {
+      if (outcome.status === "rejected" && outcome.step.targetRef) {
+        rejectedRefs.add(outcome.step.targetRef);
+      }
       consecutiveStale += 1;
       if (consecutiveStale <= 2) continue;
-      status = "error";
+      status = outcome.status === "rejected" ? "needs_text" : "error";
+      needs = outcome.needs;
       break;
     }
     if (outcome.status === "error") {

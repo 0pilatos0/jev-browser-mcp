@@ -48,20 +48,25 @@ export interface DecideArgs {
   instruction?: string;
   snapshot: Snapshot;
   history: { operation: string; detail: string }[];
+  /** Keys of caller-supplied values (never the contents). */
+  valueKeys?: string[];
+  /** Element refs to omit from the action space (e.g. fields that already rejected a value). */
+  excludeRefs?: string[];
 }
 
 /** One Jev request decides the next operation *and* the target element. */
 export async function decide(args: DecideArgs): Promise<Decision> {
   const { snapshot } = args;
 
+  const excluded = new Set(args.excludeRefs ?? []);
   const clickables = snapshot.elements.filter(
-    (e) => e.kind === "click" && !e.disabled,
+    (e) => e.kind === "click" && !e.disabled && !excluded.has(e.ref),
   );
   const typeables = snapshot.elements.filter(
-    (e) => e.kind === "type" && !e.disabled,
+    (e) => e.kind === "type" && !e.disabled && !excluded.has(e.ref),
   );
   const selects = snapshot.elements.filter(
-    (e) => e.kind === "select" && !e.disabled,
+    (e) => e.kind === "select" && !e.disabled && !excluded.has(e.ref),
   );
 
   const operationCriteria: Record<string, string> = {
@@ -69,6 +74,8 @@ export async function decide(args: DecideArgs): Promise<Decision> {
   };
   if (typeables.length > 0) {
     operationCriteria.TYPE = "Fill one of the text fields.";
+    operationCriteria.PRESS_ENTER =
+      "Press Enter, e.g. to submit a search field that was just filled.";
   }
   if (selects.length > 0) {
     operationCriteria.SELECT = "Choose an option in one of the dropdowns.";
@@ -123,8 +130,12 @@ export async function decide(args: DecideArgs): Promise<Decision> {
     );
   }
   if (typeables.length > 0) {
+    const labelHint =
+      args.valueKeys && args.valueKeys.length > 0
+        ? ` Available supplied value labels: ${args.valueKeys.map((key) => `"${key}"`).join(", ")}.`
+        : "";
     questions.type_target = choice(
-      "IF the chosen operation is TYPE, which field should be filled? If TYPE was not chosen, pick any field.",
+      `IF the chosen operation is TYPE, which field should be filled? Prefer a field that matches the goal and the supplied value labels.${labelHint} If TYPE was not chosen, pick any field.`,
       criteriaFor(typeables),
     );
   }
@@ -138,6 +149,9 @@ export async function decide(args: DecideArgs): Promise<Decision> {
   const state: EntryType = {
     goal: args.goal,
     ...(args.instruction ? { instruction: args.instruction } : {}),
+    ...(args.valueKeys && args.valueKeys.length > 0
+      ? { supplied_value_labels: args.valueKeys }
+      : {}),
     page: {
       url: snapshot.url,
       title: snapshot.title,
@@ -184,6 +198,53 @@ export interface SelectChoice {
   inputTokens: number;
   outputTokens: number;
   model: string;
+}
+
+/**
+ * Second-stage decision used only when a supplied value does not match the
+ * field by name. The model sees the value *labels* (caller-chosen keys), never
+ * the contents.
+ */
+export async function chooseValueKey(args: {
+  goal: string;
+  instruction?: string;
+  field: PageElement;
+  keys: string[];
+}): Promise<{ key?: string; inputTokens: number; outputTokens: number }> {
+  const criteria: Record<string, string> = {};
+  args.keys.slice(0, 50).forEach((key) => {
+    criteria[key] = key;
+  });
+  criteria.__none__ = "None of these values belongs in this field.";
+
+  const questions: Record<string, Question> = {
+    value: choice(
+      "Which supplied value, if any, should be typed into this field? Choose __none__ if no supplied value belongs here.",
+      criteria,
+    ),
+  };
+  const state: EntryType = {
+    goal: args.goal,
+    ...(args.instruction ? { instruction: args.instruction } : {}),
+    field: {
+      label: args.field.name,
+      role: args.field.role,
+      current: args.field.value ?? "",
+    },
+  };
+
+  const response = await getClient().systemOne({
+    state,
+    questions,
+    ...modelOption(),
+  });
+  const answers = response.answers as unknown as Record<string, AnyAnswer>;
+  const picked = answers.value?.choice;
+  return {
+    key: picked && picked !== "__none__" ? picked : undefined,
+    inputTokens: response.usage.input_tokens,
+    outputTokens: response.usage.output_tokens,
+  };
 }
 
 /** Second-stage decision used only when a SELECT has no caller-supplied value. */

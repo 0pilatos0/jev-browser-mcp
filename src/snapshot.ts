@@ -257,17 +257,22 @@ export async function takeSnapshot(
           }
           if (classified.kind === "skip") continue;
           const rect = el.getBoundingClientRect();
+          const name = labelFor(el);
+          const submitOnType =
+            classified.submitOnType ||
+            (classified.kind === "type" &&
+              /search|zoek|suche|recherche|buscar/i.test(name));
           candidates.push({
             el,
             kind: classified.kind,
             role: classified.role,
-            name: labelFor(el),
+            name,
             value: valueFor(el),
             disabled:
               (el as HTMLInputElement).disabled === true ||
               el.getAttribute("aria-disabled") === "true",
             inViewport: inViewport(el),
-            submitOnType: classified.submitOnType,
+            submitOnType,
             top: rect.top,
             left: rect.left,
           });

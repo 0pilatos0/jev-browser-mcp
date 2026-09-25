@@ -4,6 +4,7 @@ export type Operation =
   | "CLICK"
   | "TYPE"
   | "SELECT"
+  | "PRESS_ENTER"
   | "SCROLL_UP"
   | "SCROLL_DOWN"
   | "BACK"
@@ -15,6 +16,7 @@ export const OPERATIONS: readonly Operation[] = [
   "CLICK",
   "TYPE",
   "SELECT",
+  "PRESS_ENTER",
   "SCROLL_UP",
   "SCROLL_DOWN",
   "BACK",

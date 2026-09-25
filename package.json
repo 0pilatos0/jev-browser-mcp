@@ -21,6 +21,7 @@
     "inspect": "tsx scripts/inspect-snapshot.ts",
     "smoke": "tsx scripts/smoke.ts",
     "e2e": "tsx scripts/e2e.ts",
+    "run": "tsx scripts/run.ts",
     "mcp-check": "tsx scripts/mcp-check.ts"
   },
   "dependencies": {
