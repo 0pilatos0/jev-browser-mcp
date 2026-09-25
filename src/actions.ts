@@ -78,11 +78,21 @@ export async function clickRef(
   const check = await verifyTarget(page, ref);
   if (!check.ok) return { ok: false, detail: `click ${ref}`, error: check.reason };
   const label = element?.name ? ` "${element.name}"` : "";
+  const locator = page.locator(`[data-jev-ref="${ref}"]`);
+  // Center first: scrollIntoViewIfNeeded can park the element under a sticky header.
+  await locator
+    .evaluate((el) => el.scrollIntoView({ block: "center", inline: "center" }))
+    .catch(() => {});
   try {
-    await page.locator(`[data-jev-ref="${ref}"]`).click({ timeout: 5000 });
+    await locator.click({ timeout: 5000 });
     return { ok: true, detail: `click ${ref}${label}` };
-  } catch (error) {
-    return { ok: false, detail: `click ${ref}${label}`, error: shorten(error) };
+  } catch (firstError) {
+    try {
+      await locator.evaluate((el) => (el as HTMLElement).click());
+      return { ok: true, detail: `click ${ref}${label} (DOM click fallback)` };
+    } catch {
+      return { ok: false, detail: `click ${ref}${label}`, error: shorten(firstError) };
+    }
   }
 }
 

@@ -75,12 +75,13 @@ export async function ensurePageHelpers(page: Page): Promise<void> {
 export async function findElements(
   page: Page,
   query: string,
-  options: { maxResults?: number } = {},
+  options: { maxResults?: number; exact?: boolean } = {},
 ): Promise<PageElement[]> {
   const maxResults = Math.min(Math.max(options.maxResults ?? 10, 1), 50);
+  const exact = options.exact === true;
   await ensurePageHelpers(page);
   return page.evaluate(
-    ({ query, maxResults, selector }) => {
+    ({ query, maxResults, exact, selector }) => {
       for (const el of Array.from(document.querySelectorAll("[data-jev-ref]"))) {
         el.removeAttribute("data-jev-ref");
       }
@@ -131,7 +132,9 @@ export async function findElements(
         if (tag === "input" && (type === "password" || type === "hidden")) continue;
         if (!isVisible(el)) continue;
         const name = labelFor(el);
-        if (!name || !name.toLowerCase().includes(needle)) continue;
+        if (!name) continue;
+        const nameLower = name.toLowerCase();
+        if (exact ? nameLower !== needle : !nameLower.includes(needle)) continue;
 
         let kind: "click" | "type" | "select" = "click";
         let role = (el.getAttribute("role") || "").toLowerCase() || (tag === "a" ? "link" : "button");
@@ -163,7 +166,7 @@ export async function findElements(
       }
       return results;
     },
-    { query, maxResults, selector: SELECTOR },
+    { query, maxResults, exact, selector: SELECTOR },
   );
 }
 

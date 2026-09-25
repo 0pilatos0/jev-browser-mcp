@@ -148,8 +148,8 @@ export async function decide(args: DecideArgs): Promise<Decision> {
   }
   segments.forEach((segment, index) => {
     questions[`click_segment_${index + 1}`] = choice(
-      `Segment ${index + 1} of ${segments.length} of the page's links. Which link in this segment is most likely to move toward the goal? Use world knowledge, not screen position. Choose __none__ if nothing in this segment is relevant.`,
-      { ...criteriaFor(segment), __none__: "No link in this segment is relevant." },
+      `Segment ${index + 1} of ${segments.length} of the page's links. Which link in this segment is the most promising next hop toward the goal? Pick the best available even if imperfect; prefer concrete topic articles (things, materials, culture, people) over list, index or meta pages. Use world knowledge, not screen position.`,
+      criteriaFor(segment),
     );
   });
   if (typeables.length > 0) {
@@ -222,7 +222,7 @@ export async function decide(args: DecideArgs): Promise<Decision> {
         state,
         questions: {
           click_target: choice(
-            "These are the strongest link candidates from each segment of the page. Which single link should be clicked to pursue the goal? Choose __none__ only if none of them can help.",
+            "These are the most promising links from each segment of the page. Which single link should be clicked to move toward the goal? Choose __none__ only if none of them can possibly help.",
             { ...criteriaFor(winners), __none__: "None of these links." },
           ),
         },

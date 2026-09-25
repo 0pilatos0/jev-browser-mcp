@@ -315,13 +315,14 @@ export function registerTools(server: McpServer): void {
         "Find interactive elements by case-insensitive name match anywhere on the page — including beyond the observe window on huge pages — and tag them with refs (f1, f2, ...). Free — no model call. The targeted way to act on dense pages: browser_find \"Philips\", then browser_click the returned ref. Works for links, buttons, and form fields. Returns {match_count, matches:[{ref, kind, role, name, value?, inViewport}]}.",
       inputSchema: {
         query: z.string().describe("Text to match against element names/labels, e.g. \"Philips\" or \"Sign in\"."),
+        exact: z.boolean().optional().describe("Require the name to equal the query (case-insensitive) instead of substring matching. Default false."),
         max_results: z.number().int().min(1).max(50).optional().describe("Max matches (default 10); increase if the first result is not the one you want."),
       },
     },
-    async ({ query, max_results }) => {
+    async ({ query, exact, max_results }) => {
       try {
         const page = await session.getPage();
-        const matches = await findElements(page, query, { maxResults: max_results ?? 10 });
+        const matches = await findElements(page, query, { maxResults: max_results ?? 10, exact: exact ?? false });
         return ok({
           query,
           match_count: matches.length,
