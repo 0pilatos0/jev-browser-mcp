@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Demo shop</title>
+</head>
+<body>
+  <h1>Demo shop</h1>
+
+  <form id="search-form">
+    <input type="search" id="q" aria-label="Search products" placeholder="Search products">
+    <button type="submit">Search</button>
+  </form>
+  <section id="results" hidden>
+    <h2>Results for <span id="term"></span></h2>
+    <button id="open-result">Open result: Ristretto</button>
+  </section>
+  <section id="article" hidden>
+    <h2>Article: Ristretto</h2>
+    <p>The ristretto is a short shot of espresso made with less water.</p>
+  </section>
+
+  <form id="booking">
+    <label for="name">Full name</label>
+    <input id="name" type="text" placeholder="Full name">
+    <label for="dest">Destination</label>
+    <select id="dest">
+      <option>Berlin</option>
+      <option>Lisbon</option>
+      <option>Porto</option>
+    </select>
+    <input id="pw" type="password" aria-label="Account password">
+  </form>
+
+  <button id="details-btn">Show details</button>
+  <p id="details" hidden>Free cancellation available.</p>
+  <button id="disabled-btn" disabled>Disabled button</button>
+  <div role="button" tabindex="0" id="custom">Custom div button</div>
+
+  <p><a href="page2.html" id="next">Next page</a></p>
+
+  <div style="height: 1800px"></div>
+  <button id="bottom">Bottom button</button>
+
+  <script>
+    document.getElementById("search-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      document.getElementById("term").textContent =
+        document.getElementById("q").value || "nothing";
+      document.getElementById("results").hidden = false;
+    });
+    document.getElementById("open-result").addEventListener("click", () => {
+      document.getElementById("article").hidden = false;
+    });
+    document.getElementById("details-btn").addEventListener("click", () => {
+      document.getElementById("details").hidden = false;
+    });
+    document.getElementById("custom").addEventListener("click", () => {
+      document.getElementById("custom").textContent = "Custom div button (clicked)";
+    });
+  </script>
+</body>
+</html>
